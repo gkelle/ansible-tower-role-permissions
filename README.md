@@ -52,7 +52,7 @@ Example Playbook
 
     - hosts: localhost
       roles:
-         - role: ansible-tower-ldap-settings
+         - role: ansible-tower-role-permissions
            vars:
              tower_host: 10.10.10.100
              tower_permissions:
