@@ -1,0 +1,21 @@
+---
+# defaults file for ansible-tower-role-permissions
+
+# Connection settings
+tower_host: null
+tower_url_protocol: https
+
+# Authentication variables
+# Can either set a tower_user/tower_password combination or use a token
+tower_user: null
+tower_password: null
+tower_token: null
+
+#URI Variables
+tower_uri_validate_certs: no
+tower_uri_force_basic_auth: yes
+
+# Permission settings
+tower_permissions:
+  team: []
+  user: []

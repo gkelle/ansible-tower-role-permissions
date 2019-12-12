@@ -1,0 +1,44 @@
+---
+# tasks file for ansible-tower-role-permissions
+- name: Check that required variables are defined
+  fail:
+    msg: "tower_host is not set"
+  when: tower_host is none
+
+- name: Check that required variables are defined
+  fail:
+    msg: "tower_token is not defined and tower_user/tower_password are not set"
+  when: ( tower_user is none or tower_password is none ) and tower_token is none
+
+- name: Set Bearer Token Header
+  set_fact:
+    tower_token_header:
+      Authorization: "Bearer {{ tower_token }}"
+  when: tower_token is not none
+  no_log: True
+
+- name: Set fact for Tower base url
+  set_fact:
+    tower_base_url: "{{ tower_url_protocol }}://{{ tower_host }}"
+
+- name: Print warning when tower_uri_validate_certs is disabled and using https
+  debug:
+    msg: "Warning: Certificate verification is not enabled and you are using https. You can get rid of this message by setting tower_uri_validate_certs to True."
+  when:
+  - "tower_url_protocol == 'https'"
+  - "tower_uri_validate_certs|bool == False"
+
+- name: Generate mappings for Tower objects 
+  include_tasks: generate_tower_mappings.yml
+
+- name: Process Tower team permissions
+  vars:
+    is_team: True
+  include_tasks: process_tower_permissions.yml
+  loop: "{{ tower_permissions.team | default([]) }}"
+
+- name: Process Tower user permissions
+  vars:
+    is_team: False
+  include_tasks: process_tower_permissions.yml
+  loop: "{{ tower_permissions.user | default([]) }}"

@@ -1,0 +1,66 @@
+---
+- name: Get a list of Tower organizations
+  uri:
+    url: "{{ tower_base_url }}/api/v2/organizations/"
+    user: "{{ ( tower_user is none ) | ternary(omit, tower_user) }}"
+    password: "{{ ( tower_password is none ) | ternary(omit, tower_password) }}"
+    headers: "{{ tower_token_header | default(omit) }}"
+    validate_certs: "{{ tower_uri_validate_certs | default(omit) }}"
+    force_basic_auth: "{{ tower_uri_force_basic_auth | default(omit) }}"
+  no_log: True
+  register: organizations_output
+
+- name: Build map of Tower organizations and ids
+  vars:
+    organization_name: "{{ item[1].name }}"
+    organization_id: "{{ item[1].id }}"
+    organization_roles: "{{ item[0] }}"
+  set_fact:
+    tower_organizations: "{{ tower_organizations | default({}) | combine({organization_name:{'id':organization_id,'roles':organization_roles}}) }}"
+    tower_organizations_by_id: "{{ tower_organizations_by_id | default({}) | combine({organization_id:{'name':organization_name,'roles':organization_roles}}) }}"
+  loop: "{{ organizations_output | json_query('json.results[*].[summary_fields.object_roles.values(@), {id: id, name: name} ]') }}"
+  loop_control:
+    label: "{{ organization_name }} - {{ organization_id }} "
+
+- name: Validate that the Tower organization map is populated
+  assert:
+    that:
+    - (tower_organizations | length) > 0
+
+- name: Generate map of Tower organization roles with their ids
+  vars:
+    organization_name: "{{ tower_organizations_by_id[item.0.id]['name'] }}"
+    organization_id: "{{ item.0.id }}"
+    tower_role_id: "{{ item.1.id }}"
+    tower_role_name: "{{ item.1.name }}"
+  set_fact:
+    organization_role_map: "{{ organization_role_map | default({}) | combine({organization_name:{tower_role_name:tower_role_id}}, recursive=True) }}"
+    organization_role_map_by_id: "{{ organization_role_map_by_id | default({}) | combine({organization_id:{tower_role_name:tower_role_id}}, recursive=True) }}"
+  loop: "{{  tower_organizations  | subelements('roles') }}"
+  loop_control:
+    label: "{{ organization_name }} - {{ tower_role_name }} - {{ tower_role_id }}"
+
+- name: Get a list of Tower teams
+  uri:
+    url: "{{ tower_base_url }}/api/v2/teams/"
+    user: "{{ ( tower_user is none ) | ternary(omit, tower_user) }}"
+    password: "{{ ( tower_password is none ) | ternary(omit, tower_password) }}"
+    headers: "{{ tower_token_header | default(omit) }}"
+    validate_certs: "{{ tower_uri_validate_certs | default(omit) }}"
+    force_basic_auth: "{{ tower_uri_force_basic_auth | default(omit) }}"
+  no_log: True
+  register: teams_output
+
+- name: Build map of Tower teams and ids
+  vars:
+    team_name: "{{ item.name }}"
+    team_id: "{{ item.id }}"
+    team_organization_id: "{{ item.organization_id }}"
+    team_organization: "{{ item.organization_name }}"
+    team_roles: "{{ item.roles }}"
+  set_fact:
+    tower_teams: "{{ tower_teams | default({}) | combine({team_organization:{team_name:{'id':team_id, 'roles':team_roles}}}, recursive=True) }}"
+    tower_teams_by_id: "{{ tower_teams_by_id | default({}) | combine({team_organization_id:{team_name:{'id':team_id}}}, recursive=True) }}"
+  loop: "{{ teams_output | json_query('json.results[].{id: id, name: name, organization_id: organization, organization_name: summary_fields.organization.name, roles:summary_fields.object_roles.values(@)}') }}"
+  loop_control:
+    label: "{{ team_organization }} - {{ team_name }} - {{ team_id }} "

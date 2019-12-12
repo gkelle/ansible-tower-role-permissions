@@ -1,0 +1,146 @@
+---
+- name: Set Tower team facts
+  set_fact:
+    is_team: "{{ is_team | default(False) }}"
+
+- name: Verify that the Tower permissions keys are defined
+  assert:
+    that:
+    - "'organization' in item"
+    - "'name' in item"
+    fail_msg: "Team definition is missing name or organization keys. Item that triggered this message: {{ item }}"
+    quiet: yes
+
+- name: Verify that the Tower permissions key has a value
+  assert:
+    that:
+    - "(not 'permissions' in item) or ('permissions' in item and item.permissions is not none)"
+    fail_msg: "Make sure that your permissions dictionary for team {{ item.name }} is either set to a value or does not exist.  If the dictionary does not exist, all roles will be removed from the team."
+    quiet: yes
+
+- name: Verify that the Tower organization exists
+  assert:
+    that:
+    - "item.organization in tower_organizations"
+    success_msg: "{{ item.organization }} found in list of organizations"
+    fail_msg: "{{ item.organization }} not found in list of organizations"
+
+- name: Process Tower team permissions
+  block:
+  - name: Set default team id fact
+    set_fact:
+      team_id: -1
+
+  - name: Look up ID for the Tower team
+    set_fact:
+      team_id: "{{ tower_teams[item.organization][item.name]['id'] | default(-1) }}"
+    when: "tower_teams[item.organization][item.name] is defined"
+
+  - name: Verify that the Tower team exists
+    assert:
+      that: team_id != -1
+      success_msg: "{{ item.name }} found in list of teams and organization matches. Team id is {{ team_id }}"
+      fail_msg: "{{ item.name }} not found in list of teams and/or organization doesn't match"
+
+  - name: "Generate list of permissions to set for Tower team {{ item.name }} (dict type)"
+    vars:
+      permission_id: "{{ organization_role_map[inner_item.organization][inner_item.name] }}"
+    set_fact:
+      team_requested_role_permissions: "{{ (team_requested_role_permissions | default([])) + [ permission_id | int] }}"
+    loop: "{{ item.permissions | default([]) }}"
+    loop_control:
+      loop_var: inner_item
+    when:
+    - inner_item | type_debug == 'dict'
+    - "'organization' in inner_item"
+    - "'name' in inner_item"
+    - "inner_item.organization in organization_role_map"
+    - "inner_item.name in organization_role_map[item.organization]"
+
+  - name: "Generate list of permissions to set for Tower team {{ item.name }} (non-dict type)"
+    vars:
+      permission_id: "{{ organization_role_map[item.organization][inner_item] }}"
+    set_fact:
+      team_requested_role_permissions: "{{ (team_requested_role_permissions | default([])) + [ permission_id| int ] }}"
+    loop: "{{ item.permissions | default([]) }}"
+    loop_control:
+      loop_var: inner_item
+    when:
+    - inner_item | type_debug != 'dict'
+    - "item.organization in organization_role_map"
+    - "inner_item in organization_role_map[item.organization]"
+  - name: Get a list of current Tower team roles
+    uri:
+      url: "{{ tower_base_url }}/api/v2/teams/{{ team_id }}/roles/"
+      user: "{{ ( tower_user is none ) | ternary(omit, tower_user) }}"
+      password: "{{ ( tower_password is none ) | ternary(omit, tower_password) }}"
+      headers: "{{ tower_token_header | default(omit) }}"
+      validate_certs: "{{ tower_uri_validate_certs | default(omit) }}"
+      force_basic_auth: "{{ tower_uri_force_basic_auth | default(omit) }}"
+    no_log: True
+    register: roles_output
+
+  - name: Set facts for current list of permissions
+    set_fact:
+      team_current_role_permissions: "{{ roles_output | json_query('json.results[].id') }}"
+
+  - name: Set facts for list of permissions to remove
+    set_fact:
+      team_deleted_role_permissions: "{{ team_current_role_permissions | difference(team_requested_role_permissions|default([]) ) }}"
+
+  - name: Set facts for list of permissions to add
+    set_fact:
+      team_added_role_permissions: "{{ (team_requested_role_permissions | default([]) )| difference(team_current_role_permissions ) }}"
+
+  - name: "List of Tower team roles that we will add for team {{ item.name }}"
+    debug:
+      msg: "Roles: {{ team_added_role_permissions }}"
+
+  - name: "Add roles to Tower team {{ item.name }}"
+    vars:
+      body:
+        id: "{{ inner_item }}"
+    uri:
+      url: "{{ tower_base_url }}/api/v2/teams/{{ team_id }}/roles/"
+      user: "{{ ( tower_user is none ) | ternary(omit, tower_user) }}"
+      password: "{{ ( tower_password is none ) | ternary(omit, tower_password) }}"
+      headers: "{{ tower_token_header | default(omit) }}"
+      validate_certs: "{{ tower_uri_validate_certs | default(omit) }}"
+      force_basic_auth: "{{ tower_uri_force_basic_auth | default(omit) }}"
+      body_format: json
+      method: POST
+      body: "{{ body }}" 
+      status_code:
+      - 204
+    no_log: True
+    loop: "{{ team_added_role_permissions }}"
+    loop_control:
+      loop_var: inner_item
+
+  - name: "List of team roles that we will remove from {{ item.name }}"
+    debug:
+      msg: "Roles: {{ team_deleted_role_permissions }}"
+
+  - name: "Remove extraneous roles from Tower team {{ item.name }}"
+    vars:
+      body:
+        id: "{{ inner_item }}"
+        disassociate: "dummy"
+    uri:
+      url: "{{ tower_base_url }}/api/v2/teams/{{ team_id }}/roles/"
+      user: "{{ ( tower_user is none ) | ternary(omit, tower_user) }}"
+      password: "{{ ( tower_password is none ) | ternary(omit, tower_password) }}"
+      headers: "{{ tower_token_header | default(omit) }}"
+      validate_certs: "{{ tower_uri_validate_certs | default(omit) }}"
+      force_basic_auth: "{{ tower_uri_force_basic_auth | default(omit) }}"
+      body_format: json
+      method: POST
+      body: "{{ body }}" 
+      status_code:
+      - 204
+    no_log: True
+    loop: "{{ team_deleted_role_permissions }}"
+    loop_control:
+      loop_var: inner_item
+  when: is_team
+
